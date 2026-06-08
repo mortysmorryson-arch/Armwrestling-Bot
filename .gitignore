@@ -1,0 +1,21 @@
+# Секретные данные
+.env
+.env.example
+
+# База данных (там личные данные учеников!)
+bot.db
+*.sqlite3
+
+# Системные файлы Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Виртуальное окружение (если есть)
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
