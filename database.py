@@ -6,6 +6,7 @@ DB_PATH = "bot.db"
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
+        # 1. Таблица пользователей
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -19,42 +20,43 @@ async def init_db():
             )
         """)
         
-        # Добавляем новые поля, если их нет
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN invite_token TEXT")
-        except Exception:
-            pass
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN source TEXT DEFAULT 'direct'")
-        except Exception:
-            pass
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN is_blocked INTEGER DEFAULT 0")
-        except Exception:
-            pass
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN registered_at TEXT")
-        except Exception:
-            pass
+        # Добавляем новые поля, если их нет (для совместимости со старыми версиями)
+        for col, default in [("invite_token", "TEXT"), ("source", "TEXT DEFAULT 'direct'"), 
+                             ("is_blocked", "INTEGER DEFAULT 0"), ("registered_at", "TEXT")]:
+            try:
+                await db.execute(f"ALTER TABLE users ADD COLUMN {col} {default}")
+            except Exception:
+                pass
         
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS workouts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                date TEXT,
-                exercise TEXT,
-                weight REAL,
-                sets INTEGER,
-                reps INTEGER,
-                notes TEXT DEFAULT '',
-                FOREIGN KEY (user_id) REFERENCES users(id)
-            )
-        """)
+        # 2. Таблица тренировок (с безопасной миграцией типа reps на TEXT)
         try:
-            await db.execute("ALTER TABLE workouts ADD COLUMN notes TEXT DEFAULT ''")
+            # Создаем временную таблицу с правильным типом reps
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS workouts_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    date TEXT,
+                    exercise TEXT,
+                    weight REAL,
+                    sets INTEGER,
+                    reps TEXT,
+                    notes TEXT DEFAULT '',
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                )
+            """)
+            # Переносим данные из старой таблицы (если она существует)
+            await db.execute("""
+                INSERT INTO workouts_new (id, user_id, date, exercise, weight, sets, reps, notes)
+                SELECT id, user_id, date, exercise, weight, sets, CAST(reps AS TEXT), notes FROM workouts
+            """)
+            # Заменяем старую таблицу на новую
+            await db.execute("DROP TABLE workouts")
+            await db.execute("ALTER TABLE workouts_new RENAME TO workouts")
         except Exception:
+            # Если таблицы workouts еще не было, или миграция уже прошла, просто игнорируем ошибку
             pass
 
+        # 3. Таблица рекордов
         await db.execute("""
             CREATE TABLE IF NOT EXISTS records (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -64,6 +66,8 @@ async def init_db():
                 UNIQUE(user_id, exercise)
             )
         """)
+        
+        # 4. Таблица напоминаний
         await db.execute("""
             CREATE TABLE IF NOT EXISTS reminders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,6 +77,8 @@ async def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(id)
             )
         """)
+        
+        # 5. Таблица целей
         await db.execute("""
             CREATE TABLE IF NOT EXISTS goals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -85,7 +91,7 @@ async def init_db():
             )
         """)
         
-        # Таблица приглашений
+        # 6. Таблица приглашений
         await db.execute("""
             CREATE TABLE IF NOT EXISTS invites (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,6 +102,20 @@ async def init_db():
             )
         """)
         
+        # 7. Таблица сообщений
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sender_telegram_id INTEGER,
+                receiver_telegram_id INTEGER,
+                text TEXT,
+                timestamp TEXT,
+                is_read INTEGER DEFAULT 0,
+                FOREIGN KEY (sender_telegram_id) REFERENCES users(telegram_id),
+                FOREIGN KEY (receiver_telegram_id) REFERENCES users(telegram_id)
+            )
+        """)
+        
         await db.commit()
 
 async def get_or_create_user(telegram_id: int, name: str, invite_token: str = None, source: str = 'direct') -> int:
@@ -103,7 +123,6 @@ async def get_or_create_user(telegram_id: int, name: str, invite_token: str = No
         cursor = await db.execute("SELECT id FROM users WHERE telegram_id = ?", (telegram_id,))
         row = await cursor.fetchone()
         if row:
-            # Обновляем имя и источник, если передан
             if invite_token:
                 await db.execute(
                     "UPDATE users SET name = ?, invite_token = ?, source = ? WHERE telegram_id = ?",
@@ -138,7 +157,8 @@ async def unblock_user(telegram_id: int):
         await db.execute("UPDATE users SET is_blocked = 0 WHERE telegram_id = ?", (telegram_id,))
         await db.commit()
 
-async def add_workout(user_id: int, exercise: str, weight: float, sets: int, reps: int, notes: str = "") -> str:
+# ИЗМЕНЕНО: reps теперь имеет тип str
+async def add_workout(user_id: int, exercise: str, weight: float, sets: int, reps: str, notes: str = "") -> str:
     date_str = datetime.now().strftime("%Y-%m-%d")
     record_msg = ""
     
@@ -287,7 +307,8 @@ async def get_last_workout(user_id: int):
         )
         return await cursor.fetchone()
 
-async def update_workout(workout_id: int, exercise: str, weight: float, sets: int, reps: int):
+# ИЗМЕНЕНО: reps теперь имеет тип str
+async def update_workout(workout_id: int, exercise: str, weight: float, sets: int, reps: str):
     exercise = re.sub(r'[:;,.!?]+$', '', exercise).strip()
     
     async with aiosqlite.connect(DB_PATH) as db:
@@ -478,9 +499,8 @@ async def mark_as_read(sender_telegram_id: int, receiver_telegram_id: int):
 # === ФУНКЦИИ ДЛЯ ПРИГЛАШЕНИЙ ===
 
 async def create_invite_token(created_by: int) -> str:
-    """Создаёт новый токен приглашения. Возвращает токен."""
     import secrets
-    token = secrets.token_urlsafe(8)  # Например: "ABC123xyz"
+    token = secrets.token_urlsafe(8)
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
@@ -491,7 +511,6 @@ async def create_invite_token(created_by: int) -> str:
     return token
 
 async def get_invite_token(token: str):
-    """Возвращает запись приглашения по токену. None если не найдено или неактивно."""
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             "SELECT id, token, created_at, created_by, is_active FROM invites WHERE token = ? AND is_active = 1",
@@ -500,7 +519,6 @@ async def get_invite_token(token: str):
         return await cursor.fetchone()
 
 async def get_all_invites() -> list:
-    """Возвращает все приглашения с количеством использований."""
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("""
             SELECT i.token, i.created_at, i.is_active, COUNT(u.id) as usage_count
@@ -512,13 +530,11 @@ async def get_all_invites() -> list:
         return await cursor.fetchall()
 
 async def deactivate_invite(token: str):
-    """Деактивирует приглашение."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("UPDATE invites SET is_active = 0 WHERE token = ?", (token,))
         await db.commit()
 
 async def get_inactive_users(days: int = 14) -> list:
-    """Возвращает пользователей, которые не тренировались N дней."""
     cutoff_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("""

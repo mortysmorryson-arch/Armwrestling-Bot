@@ -63,9 +63,9 @@ STICKER_MOTIVATION = "CAACAgIAAxkBAAIBi2oi2q9k9iE9NTN9Puc5cMvH7lyLAALrYQACEDSASc
 
 MENU_BUTTONS = {
     "📝 Записать тренировку", "📋 Последняя", "📊 Моя статистика", 
-    " Прогресс", "🔥 Серия", "📅 По дате", "⚙️ Управление", "❓ Помощь", 
-    "🔐 Все ученики", "😴 Кто ленится", "📥 Экспорт CSV", "🏆 Рейтинг", " Цели",
-    "🎯 Поставить цель", "⏰ Напоминания", "💬 Чат с учеником", "️ Тренировка ученику",
+    "📈 Прогресс", "🔥 Серия", "📅 По дате", "⚙️ Управление", "❓ Помощь", 
+    "🔐 Все ученики", "😴 Кто ленится", "📥 Экспорт CSV", "🏆 Рейтинг", "🎯 Цели",
+    "🎯 Поставить цель", "⏰ Напоминания", "💬 Чат с учеником", "🏋️ Тренировка ученику",
     "📬 Сообщения", "💬 Написать тренеру", "🔗 Пригласить ученика", "👥 Управление учениками"
 }
 
@@ -81,7 +81,7 @@ async def get_unread_badge() -> str:
 
 async def get_main_keyboard_async(admin: bool = False) -> ReplyKeyboardMarkup:
     kb = [
-        [KeyboardButton(text=" Записать тренировку"), KeyboardButton(text=" Последняя")],
+        [KeyboardButton(text="📝 Записать тренировку"), KeyboardButton(text="📋 Последняя")],
         [KeyboardButton(text="📊 Моя статистика"), KeyboardButton(text="📈 Прогресс")],
         [KeyboardButton(text="🔥 Серия"), KeyboardButton(text="📅 По дате")],
         [KeyboardButton(text="⚙️ Управление"), KeyboardButton(text="🎯 Цели")],
@@ -105,62 +105,70 @@ async def get_main_keyboard_async(admin: bool = False) -> ReplyKeyboardMarkup:
         kb.append([KeyboardButton(text=f"📬 Сообщения{unread_badge}")])
         kb.append([
             KeyboardButton(text="🔗 Пригласить ученика"),
-            KeyboardButton(text=" Управление учениками")
+            KeyboardButton(text="👥 Управление учениками")
         ])
     else:
         kb.append([KeyboardButton(text="💬 Написать тренеру")])
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
+def parse_exercise_line(line: str):
+    """Парсит одну строку упражнения. Поддерживает форматы с весом и без."""
+    line = line.strip()
+    if not line:
+        return None
+    
+    # Регулярное выражение ищет: Название, Опц. Вес, Подходы, Повторения/Время
+    pattern = re.compile(r'^(.*?)\s+(?:(\d+(?:[.,]\d+)?)\s+)?(\d+)\s+(.+)\s*$')
+    match = pattern.match(line)
+    
+    if not match:
+        return None
+        
+    exercise_name = match.group(1).strip()
+    weight_str = match.group(2)
+    sets_str = match.group(3)
+    reps_str = match.group(4).strip()
+    
+    # Очистка названия от "кг" и знаков препинания в конце
+    exercise_name = re.sub(r'\b(кг|килограмм|килограммов)\b', '', exercise_name, flags=re.IGNORECASE).strip()
+    exercise_name = re.sub(r'[:;,.!?]+$', '', exercise_name).strip()
+    
+    # Очистка повторений от случайно попавших "кг"
+    reps_str = re.sub(r'\b(кг|килограмм)\b', '', reps_str, flags=re.IGNORECASE).strip()
+    
+    if not exercise_name:
+        return None
+        
+    try:
+        weight = float(weight_str.replace(',', '.')) if weight_str else 0.0
+        sets = int(float(sets_str.replace(',', '.')))
+    except ValueError:
+        return None
+        
+    return (exercise_name.capitalize(), weight, sets, reps_str)
+
 def parse_workouts(text: str):
+    """Парсит несколько упражнений из текста."""
     parts = re.split(r'[,\n;]+', text)
     workouts = []
     for part in parts:
-        part = part.strip()
-        if not part:
-            continue
-        numbers = re.findall(r'\d+(?:[.,]\d+)?', part)
-        if len(numbers) < 3:
-            continue
-        first_num_match = re.search(r'\d', part)
-        if not first_num_match:
-            continue
-        first_num_pos = first_num_match.start()
-        exercise = part[:first_num_pos].strip()
-        exercise = re.sub(r'\b(кг|килограмм|килограммов)\b', '', exercise, flags=re.IGNORECASE).strip()
-        exercise = re.sub(r'[:;,.!?]+$', '', exercise).strip()
-        if not exercise:
-            continue
-        weight = float(numbers[0].replace(',', '.'))
-        sets = int(numbers[1])
-        reps = int(numbers[2])
-        workouts.append((exercise.capitalize(), weight, sets, reps))
+        parsed = parse_exercise_line(part)
+        if parsed:
+            workouts.append(parsed)
     return workouts
 
 def parse_workouts_with_notes(text: str):
+    """Парсит упражнения И извлекает примечания."""
     parts = re.split(r'[,\n;]+', text)
     workouts = []
     notes = []
     for part in parts:
-        part = part.strip()
-        if not part:
-            continue
-        numbers = re.findall(r'\d+(?:[.,]\d+)?', part)
-        parsed = False
-        if len(numbers) >= 3:
-            first_num_match = re.search(r'\d', part)
-            if first_num_match:
-                first_num_pos = first_num_match.start()
-                exercise = part[:first_num_pos].strip()
-                exercise = re.sub(r'\b(кг|килограмм|килограммов)\b', '', exercise, flags=re.IGNORECASE).strip()
-                exercise = re.sub(r'[:;,.!?]+$', '', exercise).strip()
-                if exercise:
-                    weight = float(numbers[0].replace(',', '.'))
-                    sets = int(numbers[1])
-                    reps = int(numbers[2])
-                    workouts.append((exercise.capitalize(), weight, sets, reps))
-                    parsed = True
-        if not parsed:
-            notes.append(part)
+        parsed = parse_exercise_line(part)
+        if parsed:
+            workouts.append(parsed)
+        else:
+            if part.strip():
+                notes.append(part.strip())
     return workouts, notes
 
 def make_progress_bar(percent: float) -> str:
@@ -180,7 +188,7 @@ async def check_and_celebrate_goals(message: Message, user_id: int) -> bool:
         if percent >= 100:
             try:
                 await message.answer_sticker(STICKER_GOAL)
-                await message.answer(f"🎉 ЦЕЛЬ ДОСТИГНУТА!\n\n{exercise} → {target_weight}кг\nТы сделал это! Devon Larratt гордится тобой! ")
+                await message.answer(f"🎉 ЦЕЛЬ ДОСТИГНУТА!\n\n{exercise} → {target_weight}кг\nТы сделал это! Devon Larratt гордится тобой! 💪")
                 celebrated_goals.add(g_id)
                 goal_achieved = True
             except Exception as e:
@@ -203,60 +211,37 @@ async def build_students_keyboard(action_prefix: str) -> InlineKeyboardMarkup:
 
 @router.message(CommandStart())
 async def cmd_start(message: Message):
-    """Обработка /start с параметрами приглашения."""
-    # Получаем параметр start (может быть None)
     start_param = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else None
-    
-    # Проверяем, заблокирован ли пользователь
     is_blocked = await is_user_blocked(message.from_user.id)
     
     if is_blocked and message.from_user.id != ADMIN_ID:
-        await message.answer(
-            "🚫 *Ваш доступ к боту заблокирован.*\n\n"
-            "Обратитесь к тренеру для восстановления доступа.",
-            parse_mode="Markdown"
-        )
+        await message.answer("🚫 *Ваш доступ к боту заблокирован.*\n\nОбратитесь к тренеру для восстановления доступа.", parse_mode="Markdown")
         return
     
-    # Если есть параметр start — пытаемся зарегистрировать по приглашению
     invite_token = None
     source = 'direct'
     
     if start_param:
-        # Форматы: link_XXX, qr_XXX, invite (старый формат)
         if start_param.startswith('link_'):
-            invite_token = start_param[5:]  # Убираем префикс "link_"
+            invite_token = start_param[5:]
             source = 'ссылка'
         elif start_param.startswith('qr_'):
-            invite_token = start_param[3:]  # Убираем префикс "qr_"
+            invite_token = start_param[3:]
             source = 'QR-код'
         elif start_param == 'invite':
             source = 'прямая ссылка (старый формат)'
         else:
-            # Возможно, это просто токен без префикса
             invite_token = start_param
             source = 'неизвестно'
     
-    # Проверяем токен, если есть
     if invite_token:
         invite = await get_invite_token(invite_token)
         if not invite:
-            await message.answer(
-                "❌ *Недействительная или неактивная ссылка-приглашение.*\n\n"
-                "Обратитесь к тренеру за новой ссылкой.",
-                parse_mode="Markdown"
-            )
+            await message.answer("❌ *Недействительная или неактивная ссылка-приглашение.*\n\nОбратитесь к тренеру за новой ссылкой.", parse_mode="Markdown")
             return
     
-    # Регистрируем пользователя
-    user_id = await get_or_create_user(
-        message.from_user.id, 
-        message.from_user.full_name,
-        invite_token=invite_token,
-        source=source
-    )
+    user_id = await get_or_create_user(message.from_user.id, message.from_user.full_name, invite_token=invite_token, source=source)
     
-    # Если это админ
     if is_admin(message):
         keyboard = await get_main_keyboard_async(True)
         await message.answer(
@@ -268,14 +253,12 @@ async def cmd_start(message: Message):
             f"• Настраивать напоминания\n"
             f"• Управлять учениками (блокировать/разблокировать)\n"
             f"• Создавать приглашения (ссылки и QR-коды)\n\n"
-            f" Чтобы пригласить ученика, нажми '🔗 Пригласить ученика'.",
+            f"Чтобы пригласить ученика, нажми '🔗 Пригласить ученика'.",
             reply_markup=keyboard
         )
         return
     
-    # Если это ученик — приветствие
     keyboard = await get_main_keyboard_async(False)
-    
     if invite_token:
         welcome_text = (
             f"👋 Привет, {message.from_user.full_name}! Ты зарегистрирован в боте тренера.\n\n"
@@ -293,22 +276,21 @@ async def cmd_start(message: Message):
             f"🔧 Что ты можешь:\n"
             f"• Записывать свои тренировки (просто напиши: Жим 20 3 10)\n"
             f"• Смотреть свою статистику и прогресс\n"
-            f"• Писать тренеру через кнопку ' Написать тренеру'\n\n"
+            f"• Писать тренеру через кнопку '💬 Написать тренеру'\n\n"
             f"💪 Удачи на тренировках!"
         )
     
     await message.answer(welcome_text, reply_markup=keyboard, parse_mode="Markdown")
     
-    # Уведомляем админа о новом ученике (если это новая регистрация по приглашению)
     if invite_token and message.from_user.id != ADMIN_ID:
         try:
             await bot.send_message(
                 ADMIN_ID,
                 f"🆕 *Новый ученик зарегистрировался!*\n\n"
                 f"👤 Имя: {message.from_user.full_name}\n"
-                f" Telegram ID: {message.from_user.id}\n"
+                f"Telegram ID: {message.from_user.id}\n"
                 f"📩 Источник: *{source}*\n"
-                f" Токен приглашения: `{invite_token}`\n\n"
+                f"Токен приглашения: `{invite_token}`\n\n"
                 f"Теперь ты можешь писать ему через '💬 Чат с учеником'.",
                 parse_mode="Markdown"
             )
@@ -319,19 +301,14 @@ async def cmd_start(message: Message):
 @router.message(Command("invite"))
 @router.message(F.text.lower().contains("пригласить ученика"))
 async def cmd_invite(message: Message):
-    """Создание приглашения: ссылка + QR-код."""
     if not is_admin(message):
         return await message.answer("🔒 Только для админа.")
     
-    # Создаём токен
     token = await create_invite_token(message.from_user.id)
-    
-    # Две ссылки: для рассылки и для QR
     bot_username = (await bot.get_me()).username
     link_url = f"https://t.me/{bot_username}?start=link_{token}"
     qr_url = f"https://t.me/{bot_username}?start=qr_{token}"
     
-    # Отправляем ссылки БЕЗ Markdown (чтобы подчёркивания не пропадали)
     await message.answer(
         f"🔗 Приглашение создано!\n\n"
         f"🔑 Токен: {token}\n\n"
@@ -340,7 +317,6 @@ async def cmd_invite(message: Message):
         f"Обе ссылки ведут на один токен. Ниже — QR-код для печати."
     )
     
-    # Генерируем QR-код
     try:
         import qrcode
         qr_img = qrcode.make(qr_url)
@@ -353,22 +329,14 @@ async def cmd_invite(message: Message):
         logger.warning("Библиотека qrcode не установлена.")
     
     if qr_photo:
-        await message.answer_photo(
-            qr_photo,
-            caption=f"📱 QR-код для приглашения\nТокен: {token}"
-        )
+        await message.answer_photo(qr_photo, caption=f"📱 QR-код для приглашения\nТокен: {token}")
     else:
-        await message.answer(
-            "⚠️ Библиотека qrcode не установлена.\n"
-            "Установи: pip install qrcode[pil]"
-        )
+        await message.answer("⚠️ Библиотека qrcode не установлена.\nУстанови: pip install qrcode[pil]")
 
 @router.message(Command("invites"))
 async def cmd_invites(message: Message):
-    """Список всех приглашений."""
     if not is_admin(message):
         return await message.answer("🔒 Только для админа.")
-    
     invites = await get_all_invites()
     if not invites:
         return await message.answer("📭 Приглашений ещё не создавалось.")
@@ -378,15 +346,12 @@ async def cmd_invites(message: Message):
         status = "✅ активно" if is_active else "❌ неактивно"
         text += f"• `{token}` — {status}, использовано: {usage_count} раз\n"
         text += f"  Создано: {created_at}\n\n"
-    
     await message.answer(text, parse_mode="Markdown")
 
 @router.message(Command("revoke"))
 async def cmd_revoke(message: Message):
-    """Деактивация приглашения: /revoke TOKEN"""
     if not is_admin(message):
         return await message.answer("🔒 Только для админа.")
-    
     args = message.text.split()
     if len(args) < 2:
         return await message.answer("Использование: `/revoke TOKEN`", parse_mode="Markdown")
@@ -397,17 +362,11 @@ async def cmd_revoke(message: Message):
 
 @router.message(Command("block"))
 async def cmd_block(message: Message):
-    """Блокировка ученика: /block @username или /block USER_ID"""
     if not is_admin(message):
         return await message.answer("🔒 Только для админа.")
-    
     args = message.text.split()
     if len(args) < 2:
-        return await message.answer(
-            "Использование: `/block USER_ID`\n\n"
-            "USER_ID — telegram_id ученика (можно посмотреть через /students или /debug_users)",
-            parse_mode="Markdown"
-        )
+        return await message.answer("Использование: `/block USER_ID`\n\nUSER_ID — telegram_id ученика (можно посмотреть через /students или /debug_users)", parse_mode="Markdown")
     
     try:
         user_id = int(args[1])
@@ -415,29 +374,19 @@ async def cmd_block(message: Message):
         return await message.answer("❌ Неверный USER_ID. Должно быть число.")
     
     await block_user(user_id)
-    
     user_info = await get_user_by_telegram_id(user_id)
     user_name = user_info[2] if user_info else "неизвестный пользователь"
     
     await message.answer(f"🚫 Пользователь *{user_name}* (ID: {user_id}) заблокирован.", parse_mode="Markdown")
-    
-    # Уведомляем заблокированного
     try:
-        await bot.send_message(
-            user_id,
-            "🚫 *Ваш доступ к боту заблокирован.*\n\n"
-            "Обратитесь к тренеру для восстановления доступа.",
-            parse_mode="Markdown"
-        )
+        await bot.send_message(user_id, "🚫 *Ваш доступ к боту заблокирован.*\n\nОбратитесь к тренеру для восстановления доступа.", parse_mode="Markdown")
     except Exception as e:
         logger.error(f"Не удалось уведомить пользователя {user_id} о блокировке: {e}")
 
 @router.message(Command("unblock"))
 async def cmd_unblock(message: Message):
-    """Разблокировка ученика: /unblock USER_ID"""
     if not is_admin(message):
         return await message.answer("🔒 Только для админа.")
-    
     args = message.text.split()
     if len(args) < 2:
         return await message.answer("Использование: `/unblock USER_ID`", parse_mode="Markdown")
@@ -448,39 +397,29 @@ async def cmd_unblock(message: Message):
         return await message.answer("❌ Неверный USER_ID.")
     
     await unblock_user(user_id)
-    
     user_info = await get_user_by_telegram_id(user_id)
     user_name = user_info[2] if user_info else "неизвестный пользователь"
     
     await message.answer(f"✅ Пользователь *{user_name}* (ID: {user_id}) разблокирован.", parse_mode="Markdown")
-    
-    # Уведомляем разблокированного
     try:
-        await bot.send_message(
-            user_id,
-            "✅ *Ваш доступ к боту восстановлен!*\n\n"
-            "Теперь вы можете снова пользоваться ботом.",
-            parse_mode="Markdown"
-        )
+        await bot.send_message(user_id, "✅ *Ваш доступ к боту восстановлен!*\n\nТеперь вы можете снова пользоваться ботом.", parse_mode="Markdown")
     except Exception as e:
         logger.error(f"Не удалось уведомить пользователя {user_id} о разблокировке: {e}")
 
 @router.message(Command("manage_students"))
 @router.message(F.text.lower().contains("управление учениками"))
 async def cmd_manage_students(message: Message):
-    """Список учеников с кнопками блокировки."""
     if not is_admin(message):
-        return await message.answer(" Только для админа.")
+        return await message.answer("🔒 Только для админа.")
     
     import aiosqlite
     from database import DB_PATH
-    
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("SELECT telegram_id, name, is_blocked FROM users WHERE telegram_id IS NOT NULL ORDER BY name")
         users = await cursor.fetchall()
     
     if not users:
-        return await message.answer(" Нет пользователей.")
+        return await message.answer("📭 Нет пользователей.")
     
     text = "👥 *Управление учениками:*\n\n"
     keyboard = InlineKeyboardMarkup(inline_keyboard=[])
@@ -497,10 +436,7 @@ async def cmd_manage_students(message: Message):
             InlineKeyboardButton(text=f"{action_text} {name}", callback_data=f"{action}_student_{telegram_id}")
         ])
     
-    keyboard.inline_keyboard.append([
-        InlineKeyboardButton(text="❌ Закрыть", callback_data="close_manage")
-    ])
-    
+    keyboard.inline_keyboard.append([InlineKeyboardButton(text="❌ Закрыть", callback_data="close_manage")])
     await message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
 
 @router.callback_query(lambda c: c.data.startswith('block_student_'))
@@ -508,24 +444,15 @@ async def block_student_callback(callback_query: CallbackQuery):
     if not is_admin_by_id(callback_query.from_user.id):
         await callback_query.answer("🔒 Только для админа.", show_alert=True)
         return
-    
     student_id = int(callback_query.data.replace('block_student_', ''))
     await block_user(student_id)
-    
     user_info = await get_user_by_telegram_id(student_id)
     user_name = user_info[2] if user_info else "неизвестный"
-    
     await callback_query.message.answer(f"🚫 {user_name} заблокирован.")
-    
     try:
-        await bot.send_message(
-            student_id,
-            "🚫 *Ваш доступ к боту заблокирован.*\n\nОбратитесь к тренеру.",
-            parse_mode="Markdown"
-        )
+        await bot.send_message(student_id, "🚫 *Ваш доступ к боту заблокирован.*\n\nОбратитесь к тренеру.", parse_mode="Markdown")
     except:
         pass
-    
     await callback_query.answer()
 
 @router.callback_query(lambda c: c.data.startswith('unblock_student_'))
@@ -533,24 +460,15 @@ async def unblock_student_callback(callback_query: CallbackQuery):
     if not is_admin_by_id(callback_query.from_user.id):
         await callback_query.answer("🔒 Только для админа.", show_alert=True)
         return
-    
     student_id = int(callback_query.data.replace('unblock_student_', ''))
     await unblock_user(student_id)
-    
     user_info = await get_user_by_telegram_id(student_id)
     user_name = user_info[2] if user_info else "неизвестный"
-    
     await callback_query.message.answer(f"✅ {user_name} разблокирован.")
-    
     try:
-        await bot.send_message(
-            student_id,
-            "✅ *Ваш доступ восстановлен!*",
-            parse_mode="Markdown"
-        )
+        await bot.send_message(student_id, "✅ *Ваш доступ восстановлен!*", parse_mode="Markdown")
     except:
         pass
-    
     await callback_query.answer()
 
 @router.callback_query(lambda c: c.data == 'close_manage')
@@ -569,19 +487,19 @@ async def cmd_help(message: Message):
         "3. Жми '📊 Моя статистика' для отчета\n"
         "4. Жми '📈 Прогресс' для графика\n"
         "5. Жми '🔥 Серия' — узнать свою серию тренировок\n"
-        "6. Жми ' По дате' — посмотреть тренировки за конкретный день\n"
-        "7. Жми ' Поставить цель' — интерактивная постановка цели\n"
+        "6. Жми '📅 По дате' — посмотреть тренировки за конкретный день\n"
+        "7. Жми '🎯 Поставить цель' — интерактивная постановка цели\n"
         "8. Жми '🎯 Цели' — посмотреть активные цели\n"
         "9. Жми '⚙️ Управление' для удаления упражнений\n"
     )
     if is_admin(message):
         text += "\n🔐 Админ-команды:\n"
-        text += "10. Жми ' Напоминания' — настроить напоминания\n"
+        text += "10. Жми '⏰ Напоминания' — настроить напоминания\n"
         text += "11. Жми '💬 Чат с учеником' — написать ученику\n"
         text += "12. Жми '🏋️ Тренировка ученику' — записать тренировку ученику\n"
         text += "13. Жми '📬 Сообщения' — посмотреть непрочитанные\n"
         text += "14. Жми '🔗 Пригласить ученика' — создать ссылку и QR-код\n"
-        text += "15. Жми ' Управление учениками' — блокировать/разблокировать\n"
+        text += "15. Жми '👥 Управление учениками' — блокировать/разблокировать\n"
         text += "16. '/students' — список всех учеников\n"
         text += "17. '/invites' — список всех приглашений\n"
         text += "18. '/revoke TOKEN' — деактивировать приглашение\n"
@@ -603,12 +521,16 @@ async def cmd_log(message: Message):
     if not workouts:
         await message.answer("❌ Не понял формат. Напиши:\nЖим 20 3 10, Пронация 15 4 12")
         return
+    
     user_id = await get_or_create_user(message.from_user.id, message.from_user.full_name)
     for exercise, weight, sets, reps in workouts:
         record_msg = await add_workout(user_id, exercise, weight, sets, reps)
         streak = await get_user_streak(user_id)
         streak_msg = f"\n🔥 Серия: {streak} {'дней' if streak > 4 else 'дня' if streak > 1 else 'день'}!" if streak > 0 else ""
-        await message.answer(f"✅ Записано:\n️ {exercise}: {weight}кг × {sets}×{reps}{record_msg}{streak_msg}")
+        
+        display = f"🏋️ {exercise}: {weight}кг × {sets}×{reps}" if weight > 0 else f"🏋️ {exercise}: {sets} подх. по {reps}"
+        await message.answer(f"✅ Записано:\n{display}{record_msg}{streak_msg}")
+        
         goal_achieved = await check_and_celebrate_goals(message, user_id)
         if not goal_achieved and record_msg:
             try:
@@ -630,7 +552,7 @@ async def cmd_last(message: Message):
         await message.answer("📭 У тебя ещё нет записей.")
         return
     w_id, date, exercise, weight, sets, reps, notes = workout
-    note_text = f"\n Заметка: {notes}" if notes else ""
+    note_text = f"\n📝 Заметка: {notes}" if notes else ""
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✏️ Исправить", callback_data=f"edit_last_{w_id}"),
          InlineKeyboardButton(text="🗑 Удалить", callback_data=f"delete_last_{w_id}")],
@@ -662,7 +584,7 @@ async def delete_last_callback(callback_query: CallbackQuery):
     if deleted:
         await callback_query.message.answer("🗑 Последняя тренировка удалена.")
     else:
-        await callback_query.message.answer(" Нечего удалять.")
+        await callback_query.message.answer("📭 Нечего удалять.")
     await callback_query.answer()
 
 @router.message(Command("cancel"))
@@ -674,7 +596,7 @@ async def cmd_cancel(message: Message):
         await message.answer("❌ Редактирование отменено.")
     elif user_id in adding_note_users:
         del adding_note_users[user_id]
-        await message.answer(" Добавление заметки отменено.")
+        await message.answer("❌ Добавление заметки отменено.")
     elif user_id in awaiting_date_users:
         awaiting_date_users.remove(user_id)
         await message.answer("❌ Просмотр по дате отменен.")
@@ -708,14 +630,14 @@ async def cmd_stats(message: Message):
     user_id = await get_or_create_user(message.from_user.id, message.from_user.full_name)
     workouts = await get_user_stats(user_id)
     if not workouts:
-        await message.answer(" Тренировок пока нет.")
+        await message.answer("📭 Тренировок пока нет.")
         return
     streak = await get_user_streak(user_id)
     streak_text = f"🔥 Текущая серия: {streak} {'дней' if streak > 4 else 'дня' if streak > 1 else 'день'}\n\n" if streak > 0 else ""
-    text = f" Твоя статистика (последние 10):\n\n{streak_text}"
+    text = f"📊 Твоя статистика (последние 10):\n\n{streak_text}"
     for w in workouts[:10]:
         note = f" ({w[5]})" if w[5] else ""
-        text += f" {w[0]} | {w[1]}: {w[2]}кг × {w[3]}×{w[4]}{note}\n"
+        text += f"📅 {w[0]} | {w[1]}: {w[2]}кг × {w[3]}×{w[4]}{note}\n"
     await message.answer(text)
 
 @router.message(Command("streak"))
@@ -749,7 +671,7 @@ async def process_progress_callback(callback_query: CallbackQuery):
         user_id = await get_or_create_user(callback_query.from_user.id, callback_query.from_user.full_name)
         progress = await get_exercise_progress(user_id, exercise)
         if not progress:
-            await callback_query.message.answer(f"📭 Нет данных")
+            await callback_query.message.answer("📭 Нет данных")
             await callback_query.answer()
             return
         dates = [row[0] for row in progress]
@@ -790,7 +712,7 @@ async def cmd_date_prompt(message: Message):
             user_id = await get_or_create_user(message.from_user.id, message.from_user.full_name)
             workouts = await get_workouts_by_date(user_id, day, month)
             if not workouts:
-                return await message.answer(f" Тренировок {day:02d}.{month:02d} не было.")
+                return await message.answer(f"📭 Тренировок {day:02d}.{month:02d} не было.")
             text_msg = f"📅 Тренировки за {day:02d}.{month:02d}:\n\n"
             for w in workouts:
                 note = f" ({w[5]})" if w[5] else ""
@@ -805,7 +727,7 @@ async def cmd_manage(message: Message):
     user_id = await get_or_create_user(message.from_user.id, message.from_user.full_name)
     exercises = await get_user_exercises(user_id)
     if not exercises:
-        await message.answer(" Нет упражнений.")
+        await message.answer("📭 Нет упражнений.")
         return
     keyboard = InlineKeyboardMarkup(inline_keyboard=[])
     for ex in exercises:
@@ -875,7 +797,7 @@ async def cmd_rating(message: Message):
     if not rating:
         return await message.answer("📭 В этом месяце тренировок пока не было.")
     text = "🏆 Рейтинг учеников за этот месяц:\n\n"
-    medals = ["🥇", "🥈", ""]
+    medals = ["🥇", "🥈", "🥉"]
     for i, (name, count) in enumerate(rating):
         medal = medals[i] if i < 3 else "🏅"
         word = "тренировка" if count == 1 else "тренировки" if count < 5 else "тренировок"
@@ -896,7 +818,7 @@ async def cmd_goals(message: Message):
         percent = (current_max / target_weight) * 100 if target_weight > 0 else 0
         bar = make_progress_bar(percent)
         status = "✅ Выполнено!" if percent >= 100 else f"Текущий макс: {current_max}кг"
-        text += f"️ *{exercise}* → {target_weight}кг (до {target_date})\n{bar}\n{status}\n\n"
+        text += f"🏋️ *{exercise}* → {target_weight}кг (до {target_date})\n{bar}\n{status}\n\n"
         keyboard.inline_keyboard.append([InlineKeyboardButton(text=f"❌ Удалить цель: {exercise}", callback_data=f"delete_goal_{g_id}")])
     await message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
 
@@ -1037,7 +959,7 @@ async def rem_day_callback(callback_query: CallbackQuery):
 async def rem_days_done_callback(callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     if user_id not in reminder_steps or not reminder_steps[user_id]["days"]:
-        await callback_query.message.answer(" Выбери хотя бы один день!")
+        await callback_query.message.answer("❌ Выбери хотя бы один день!")
         await callback_query.answer()
         return
     keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_reminder")]])
@@ -1055,7 +977,7 @@ async def cancel_reminder_callback(callback_query: CallbackQuery):
 async def cmd_test_reminder(message: Message):
     if not is_admin(message):
         return await message.answer("🔒 Только для админа.")
-    logger.info(" Тест напоминаний запущен")
+    logger.info("🧪 Тест напоминаний запущен")
     lazy_users = await get_users_without_workout_today()
     logger.info(f"🧪 Найдено ленивых пользователей: {len(lazy_users)}")
     if not lazy_users:
@@ -1088,8 +1010,8 @@ async def cmd_debug_users(message: Message):
     text += f"🔑 Твой ID: {message.from_user.id}\n🔑 ADMIN_ID в .env: {ADMIN_ID}\n\n"
     for u_id, tg_id, name, role, is_blocked in users:
         trained = "✅ тренировался" if u_id in trained_today else "❌ не тренировался"
-        has_tg = f"telegram_id={tg_id}" if tg_id else " нет telegram_id"
-        blocked = " заблокирован" if is_blocked else ""
+        has_tg = f"telegram_id={tg_id}" if tg_id else "нет telegram_id"
+        blocked = "заблокирован" if is_blocked else ""
         text += f"• {name} (id={u_id}, {has_tg}, роль={role}) — {trained} {blocked}\n"
     await message.answer(text)
 
@@ -1125,7 +1047,7 @@ async def cmd_students(message: Message):
         return await message.answer("📭 В базе нет пользователей.")
     text = "👥 Список учеников:\n\n"
     for user_db_id, telegram_id, name in students:
-        is_admin_mark = " " if telegram_id == ADMIN_ID else ""
+        is_admin_mark = " 👑" if telegram_id == ADMIN_ID else ""
         unread = await get_unread_count(telegram_id)
         unread_mark = f" ({unread} непрочит.)" if unread > 0 else ""
         text += f"• {name} (id: {telegram_id}){is_admin_mark}{unread_mark}\n"
@@ -1139,7 +1061,7 @@ async def cmd_chat_start(message: Message):
     keyboard = await build_students_keyboard("chat_")
     if not keyboard.inline_keyboard or len(keyboard.inline_keyboard) <= 1:
         return await message.answer("📭 Нет учеников для чата.")
-    await message.answer(" *Чат с учеником*\n\nВыбери ученика, которому хочешь написать:", reply_markup=keyboard, parse_mode="Markdown")
+    await message.answer("💬 *Чат с учеником*\n\nВыбери ученика, которому хочешь написать:", reply_markup=keyboard, parse_mode="Markdown")
 
 @router.callback_query(lambda c: c.data.startswith('chat_'))
 async def chat_select_callback(callback_query: CallbackQuery):
@@ -1231,7 +1153,7 @@ async def cmd_messages(message: Message):
 @router.callback_query(lambda c: c.data.startswith('view_chat_'))
 async def view_chat_callback(callback_query: CallbackQuery):
     if not is_admin_by_id(callback_query.from_user.id):
-        await callback_query.answer(" Только для админа.", show_alert=True)
+        await callback_query.answer("🔒 Только для админа.", show_alert=True)
         return
     student_id = int(callback_query.data.replace('view_chat_', ''))
     student_info = await get_user_by_telegram_id(student_id)
@@ -1254,7 +1176,7 @@ async def view_chat_callback(callback_query: CallbackQuery):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✏️ Написать", callback_data=f"chat_{student_id}")],
         [InlineKeyboardButton(text="🏋️ Записать тренировку", callback_data=f"send_{student_id}")],
-        [InlineKeyboardButton(text=" Назад к сообщениям", callback_data="back_messages")]
+        [InlineKeyboardButton(text="🔙 Назад к сообщениям", callback_data="back_messages")]
     ])
     await callback_query.message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
     await callback_query.answer()
@@ -1287,10 +1209,8 @@ async def noop_callback(callback_query: CallbackQuery):
 
 @router.message(F.sticker)
 async def handle_sticker(message: Message):
-    # Если заблокирован — игнорируем
     if message.from_user.id != ADMIN_ID and await is_user_blocked(message.from_user.id):
         return
-        
     sticker = message.sticker
     logger.info(f"📦 СТИКЕР: file_id={sticker.file_id}")
     await message.answer(
@@ -1309,53 +1229,43 @@ async def handle_any_text(message: Message):
     if text in MENU_BUTTONS:
         return
     
-    # === ПРОВЕРКА БЛОКИРОВКИ ===
     if message.from_user.id != ADMIN_ID:
         if await is_user_blocked(message.from_user.id):
             logger.info(f"🚫 Заблокированный пользователь {message.from_user.id} попытался написать: {text}")
-            return  # Просто игнорируем сообщения от заблокированных
+            return
     
-    # === АДМИН В РЕЖИМЕ ЧАТА С УЧЕНИКОМ ===
     if message.from_user.id in chat_sessions:
         student_id = chat_sessions[message.from_user.id]
         student_info = await get_user_by_telegram_id(student_id)
         student_name = student_info[2] if student_info else "ученик"
         
         await save_message(ADMIN_ID, student_id, text)
-        
         try:
-            await bot.send_message(
-                student_id,
-                f"👨‍🏫 *Сообщение от тренера:*\n\n{text}",
-                parse_mode="Markdown"
-            )
+            await bot.send_message(student_id, f"👨‍🏫 *Сообщение от тренера:*\n\n{text}", parse_mode="Markdown")
             await message.answer(f"✅ Сообщение отправлено {student_name}.")
         except Exception as e:
             logger.error(f"Ошибка отправки ученику {student_id}: {e}")
             await message.answer(f"❌ Не удалось отправить сообщение: {e}")
         return
     
-    # === АДМИН В РЕЖИМЕ ОТПРАВКИ ТРЕНИРОВКИ УЧЕНИКУ ===
     if message.from_user.id in send_workout_sessions:
         student_id = send_workout_sessions[message.from_user.id]
         student_info = await get_user_by_telegram_id(student_id)
         student_name = student_info[2] if student_info else "ученик"
         
         workouts, notes = parse_workouts_with_notes(text)
-        
         if not workouts and not notes:
-            await message.answer(
-                "❌ Не понял, что записать. Напиши упражнения и/или примечания.\n\n"
-                "Или /exit чтобы отменить."
-            )
+            await message.answer("❌ Не понял, что записать. Напиши упражнения и/или примечания.\n\nИли /exit чтобы отменить.")
             return
         
         student_db_id = await get_or_create_user(student_id, student_name)
-        
         results = []
         for exercise, weight, sets, reps in workouts:
             record_msg = await add_workout(student_db_id, exercise, weight, sets, reps)
-            results.append(f"️ {exercise}: {weight}кг × {sets}×{reps}")
+            if weight > 0:
+                results.append(f"🏋️ {exercise}: {weight}кг × {sets}×{reps}")
+            else:
+                results.append(f"🏋️ {exercise}: {sets} подх. по {reps}")
         
         summary_parts = []
         if results:
@@ -1364,23 +1274,19 @@ async def handle_any_text(message: Message):
             summary_parts.append("📝 *Примечания:*\n" + "\n".join(notes))
         
         summary = "\n\n".join(summary_parts)
-        await message.answer(
-            f"✅ Тренировка записана для *{student_name}*:\n\n{summary}",
-            parse_mode="Markdown"
-        )
+        await message.answer(f"✅ Тренировка записана для *{student_name}*:\n\n{summary}", parse_mode="Markdown")
         
         if notes:
             notes_text = "\n".join(notes)
             await save_message(ADMIN_ID, student_id, f"[Тренировка] {notes_text}")
         
         try:
-            student_message = f"‍🏫 *Тренер записал тебе тренировку:*\n\n"
+            student_message = f"👨‍🏫 *Тренер записал тебе тренировку:*\n\n"
             if results:
                 student_message += "📋 *Упражнения:*\n" + "\n".join(results) + "\n\n"
             if notes:
                 student_message += "📝 *Примечания от тренера:*\n" + "\n".join(notes) + "\n\n"
             student_message += "💪 Удачи на тренировке!"
-            
             await bot.send_message(student_id, student_message, parse_mode="Markdown")
         except Exception as e:
             logger.error(f"Не удалось уведомить ученика {student_id}: {e}")
@@ -1388,12 +1294,10 @@ async def handle_any_text(message: Message):
         del send_workout_sessions[message.from_user.id]
         return
     
-    # === УЧЕНИК ПИШЕТ СООБЩЕНИЕ (СВОБОДНЫЙ ЧАТ) ===
     if message.from_user.id != ADMIN_ID:
         student_id = message.from_user.id
         student_name = message.from_user.full_name
         
-        # 1. Проверяем, похоже ли на тренировку
         workouts = parse_workouts(text)
         if workouts:
             user_id = await get_or_create_user(student_id, student_name)
@@ -1401,7 +1305,9 @@ async def handle_any_text(message: Message):
                 record_msg = await add_workout(user_id, exercise, weight, sets, reps)
                 streak = await get_user_streak(user_id)
                 streak_msg = f"\n🔥 Серия: {streak} {'дней' if streak > 4 else 'дня' if streak > 1 else 'день'}!" if streak > 0 else ""
-                await message.answer(f"✅ Записано:\n🏋️ {exercise}: {weight}кг × {sets}×{reps}{record_msg}{streak_msg}")
+                
+                display = f"🏋️ {exercise}: {weight}кг × {sets}×{reps}" if weight > 0 else f"🏋️ {exercise}: {sets} подх. по {reps}"
+                await message.answer(f"✅ Записано:\n{display}{record_msg}{streak_msg}")
                 
                 goal_achieved = await check_and_celebrate_goals(message, user_id)
                 if not goal_achieved and record_msg:
@@ -1415,46 +1321,33 @@ async def handle_any_text(message: Message):
                     except Exception as e:
                         logger.error(f"Ошибка отправки стикера серии: {e}")
             
-            # Уведомляем админа о тренировке
             await save_message(student_id, ADMIN_ID, text)
             try:
-                await bot.send_message(
-                    ADMIN_ID,
-                    f"🏋️ *{student_name} записал тренировку:*\n\n{text}",
-                    parse_mode="Markdown"
-                )
+                await bot.send_message(ADMIN_ID, f"🏋️ *{student_name} записал тренировку:*\n\n{text}", parse_mode="Markdown")
             except Exception as e:
                 logger.error(f"Не удалось уведомить админа о тренировке: {e}")
             return
         
-        # 2. Не тренировка — это сообщение тренеру
         await save_message(student_id, ADMIN_ID, text)
-        
         try:
-            await bot.send_message(
-                ADMIN_ID,
-                f" *Новое сообщение от {student_name}:*\n\n{text}",
-                parse_mode="Markdown"
-            )
+            await bot.send_message(ADMIN_ID, f"💬 *Новое сообщение от {student_name}:*\n\n{text}", parse_mode="Markdown")
             logger.info(f"💬 Сообщение от ученика {student_id} ({student_name}) переслано админу")
         except Exception as e:
             logger.error(f"Ошибка пересылки сообщения ученика: {e}")
             await message.answer("❌ Не удалось доставить сообщение тренеру.")
         
         await message.answer("✅ Сообщение отправлено тренеру.")
-        
         if student_id in awaiting_student_message:
             awaiting_student_message.remove(student_id)
         return
     
-    # === ШАГ НАСТРОЙКИ НАПОМИНАНИЙ ===
     if message.from_user.id in reminder_steps and "days" in reminder_steps[message.from_user.id] and "time" not in reminder_steps[message.from_user.id]:
         match = re.match(r'^(\d{1,2}):(\d{2})$', text.strip())
         if not match:
-            return await message.answer(" Неверный формат времени. Напиши ЧЧ:ММ (например, 18:00)\nИли /cancel")
+            return await message.answer("❌ Неверный формат времени. Напиши ЧЧ:ММ (например, 18:00)\nИли /cancel")
         hour, minute = int(match.group(1)), int(match.group(2))
         if hour > 23 or minute > 59:
-            return await message.answer(" Неверное время.")
+            return await message.answer("❌ Неверное время.")
         time_str = f"{hour:02d}:{minute:02d}"
         reminder_steps[message.from_user.id]["time"] = time_str
         user_id = await get_or_create_user(message.from_user.id, message.from_user.full_name)
@@ -1463,17 +1356,16 @@ async def handle_any_text(message: Message):
         day_names = {'1': 'Пн', '2': 'Вт', '3': 'Ср', '4': 'Чт', '5': 'Пт', '6': 'Сб', '7': 'Вс'}
         days_text = ', '.join([day_names[d] for d in sorted(reminder_steps[message.from_user.id]["days"])])
         del reminder_steps[message.from_user.id]
-        await message.answer(f"✅ Напоминания настроены:\n {days_text} в {time_str}")
+        await message.answer(f"✅ Напоминания настроены:\n📅 {days_text} в {time_str}")
         return
     
-    # === ШАГ ПОСТАНОВКИ ЦЕЛИ: ввод веса ===
     if message.from_user.id in goal_steps and "exercise" in goal_steps[message.from_user.id] and "weight" not in goal_steps[message.from_user.id]:
         try:
             weight = float(text.replace(',', '.'))
             if weight <= 0:
                 raise ValueError
         except ValueError:
-            return await message.answer(" Неверный вес. Введи число (например: 30 или 30.5)\nИли /cancel")
+            return await message.answer("❌ Неверный вес. Введи число (например: 30 или 30.5)\nИли /cancel")
         goal_steps[message.from_user.id]["weight"] = weight
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="1 месяц", callback_data="goal_months_1"), InlineKeyboardButton(text="3 месяца", callback_data="goal_months_3")],
@@ -1483,7 +1375,6 @@ async def handle_any_text(message: Message):
         await message.answer(f"⚖️ Целевой вес: {weight}кг\n\nВыбери срок достижения цели:", reply_markup=keyboard)
         return
     
-    # === ШАГ ПОСТАНОВКИ ЦЕЛИ: ввод своей даты ===
     if message.from_user.id in goal_steps and "custom_date" in goal_steps[message.from_user.id]:
         del goal_steps[message.from_user.id]["custom_date"]
         match = re.match(r'^(\d{1,2})[./](\d{1,2})[./](\d{4})$', text.strip())
@@ -1491,7 +1382,7 @@ async def handle_any_text(message: Message):
             return await message.answer("❌ Неверный формат. Напиши ДД.ММ.ГГГГ (например, 01.12.2026)\nИли /cancel")
         day, month, year = int(match.group(1)), int(match.group(2)), int(match.group(3))
         if day > 31 or month > 12:
-            return await message.answer(" Неверная дата.")
+            return await message.answer("❌ Неверная дата.")
         target_date = f"{day:02d}.{month:02d}.{year}"
         user_id = await get_or_create_user(message.from_user.id, message.from_user.full_name)
         exercise = goal_steps[message.from_user.id]["exercise"]
@@ -1501,7 +1392,6 @@ async def handle_any_text(message: Message):
         await message.answer(f"🎯 Цель поставлена:\n{exercise} → {weight}кг к {target_date}")
         return
     
-    # Режим просмотра по дате
     if message.from_user.id in awaiting_date_users:
         awaiting_date_users.remove(message.from_user.id)
         match = re.match(r'^(\d{1,2})[./](\d{1,2})$', text.strip())
@@ -1517,10 +1407,9 @@ async def handle_any_text(message: Message):
         text_msg = f"📅 Тренировки за {day:02d}.{month:02d}:\n\n"
         for w in workouts:
             note = f" ({w[5]})" if w[5] else ""
-            text_msg += f"️ {w[1]}: {w[2]}кг × {w[3]}×{w[4]}{note}\n"
+            text_msg += f"🏋️ {w[1]}: {w[2]}кг × {w[3]}×{w[4]}{note}\n"
         return await message.answer(text_msg)
 
-    # Режим добавления заметки
     if message.from_user.id in adding_note_users:
         workout_id = adding_note_users[message.from_user.id]
         await add_note_to_workout(workout_id, text)
@@ -1528,7 +1417,6 @@ async def handle_any_text(message: Message):
         await message.answer("✅ Заметка сохранена!")
         return
     
-    # Режим редактирования
     if message.from_user.id in editing_users:
         workout_id = editing_users[message.from_user.id]
         workouts = parse_workouts(text)
@@ -1541,10 +1429,11 @@ async def handle_any_text(message: Message):
         user_id = await get_or_create_user(message.from_user.id, message.from_user.full_name)
         streak = await get_user_streak(user_id)
         streak_msg = f"\n🔥 Серия: {streak} {'дней' if streak > 4 else 'дня' if streak > 1 else 'день'}!" if streak > 0 else ""
-        await message.answer(f"✅ Запись обновлена:\n🏋️ {workouts[0][0]}: {workouts[0][1]}кг × {workouts[0][2]}×{workouts[0][3]}{streak_msg}")
+        
+        display = f"🏋️ {workouts[0][0]}: {workouts[0][1]}кг × {workouts[0][2]}×{workouts[0][3]}" if workouts[0][1] > 0 else f"🏋️ {workouts[0][0]}: {workouts[0][2]} подх. по {workouts[0][3]}"
+        await message.answer(f"✅ Запись обновлена:\n{display}{streak_msg}")
         return
     
-    # Обычный режим — новая тренировка (для админа)
     workouts = parse_workouts(text)
     if not workouts:
         return
@@ -1553,7 +1442,10 @@ async def handle_any_text(message: Message):
         record_msg = await add_workout(user_id, exercise, weight, sets, reps)
         streak = await get_user_streak(user_id)
         streak_msg = f"\n🔥 Серия: {streak} {'дней' if streak > 4 else 'дня' if streak > 1 else 'день'}!" if streak > 0 else ""
-        await message.answer(f"✅ Записано:\n🏋️ {exercise}: {weight}кг × {sets}×{reps}{record_msg}{streak_msg}")
+        
+        display = f"🏋️ {exercise}: {weight}кг × {sets}×{reps}" if weight > 0 else f"🏋️ {exercise}: {sets} подх. по {reps}"
+        await message.answer(f"✅ Записано:\n{display}{record_msg}{streak_msg}")
+        
         goal_achieved = await check_and_celebrate_goals(message, user_id)
         if not goal_achieved and record_msg:
             try:
@@ -1567,8 +1459,6 @@ async def handle_any_text(message: Message):
                 logger.error(f"Ошибка отправки стикера серии: {e}")
 
 # ==================== ФОНОВЫЕ ЗАДАЧИ ====================
-
-last_reminder_sent_date = None
 
 async def reminder_task():
     global last_reminder_sent_date
@@ -1607,18 +1497,13 @@ async def reminder_task():
             logger.error(f"⏰ Ошибка в reminder_task: {e}")
         await asyncio.sleep(30)
 
-last_inactive_report_date = None
-
 async def inactive_users_task():
-    """Отчет о неактивных учениках (14 дней без тренировок)"""
     global last_inactive_report_date
     logger.info("📉 inactive_users_task запущен")
     while True:
         try:
             now = datetime.now()
             today_date = now.strftime("%Y-%m-%d")
-            
-            # Отправляем отчет один раз в день в 10:00 утра
             if now.hour == 10 and now.minute < 5:
                 if last_inactive_report_date != today_date:
                     inactive_list = await get_inactive_users(days=14)
@@ -1635,7 +1520,7 @@ async def inactive_users_task():
                     last_inactive_report_date = today_date
         except Exception as e:
             logger.error(f"Ошибка в inactive_users_task: {e}")
-        await asyncio.sleep(3600)  # Проверка каждый час
+        await asyncio.sleep(3600)
 
 async def main():
     await init_db()
