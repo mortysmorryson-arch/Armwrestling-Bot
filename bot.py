@@ -24,7 +24,7 @@ from database import (
     delete_exercise, get_last_workout, update_workout, delete_last_workout,
     get_user_streak, add_note_to_workout, export_all_workouts, get_workouts_by_date,
     get_monthly_rating, add_goal, get_user_goals, get_current_max, delete_goal,
-    set_reminder, get_reminders, get_users_without_workout_today,
+    set_reminder, get_reminders, delete_reminder, delete_all_reminders, get_users_without_workout_today,
     get_all_students, get_user_by_telegram_id,
     save_message, get_unread_count, get_chat_history, mark_as_read,
     is_user_blocked, block_user, unblock_user,
@@ -38,8 +38,8 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
+PROXY_URL = os.getenv("PROXY_URL", "").strip() 
 
-bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 router = Router()
 dp.include_router(router)
@@ -111,65 +111,86 @@ async def get_main_keyboard_async(admin: bool = False) -> ReplyKeyboardMarkup:
         kb.append([KeyboardButton(text="💬 Написать тренеру")])
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
+import re
+import logging
+
+logger = logging.getLogger(__name__)
+
+def clean_exercise_name(name: str) -> str:
+    name = name.rstrip(' ,.-')
+    name = re.sub(r'\b(кг|килограмм|килограммов)\b', '', name, flags=re.IGNORECASE).strip()
+    name = re.sub(r'[:;,.!?]+$', '', name).strip()
+    return name.capitalize()
+
 def parse_exercise_line(line: str):
+    print(f"[DEBUG] Парсим строку: {repr(line)}")
     if not line or not line.strip():
         return None
     
-    # 1. Удаляем нумерацию в начале строки (например, "1)", "2.")
+    # 1. Удаляем нумерацию
     line = re.sub(r'^\s*\d+[\.\)]\s*', '', line).strip()
     
     # 2. Извлекаем вес из скобок
-    weight = 0.0  # По умолчанию 0.0, а не None
-    weight_match = re.search(r'\(([\d\.,]+)\)', line)
+    weight = 0.0
+    weight_match = re.search(r'[\(\（]([\d\.,]+)[\)\）]', line)
     if weight_match:
-        weight_str = weight_match.group(1).replace(',', '.')
         try:
-            weight = float(weight_str)
+            weight = float(weight_match.group(1).replace(',', '.'))
         except ValueError:
-            weight = 0.0
+            pass
         line = line[:weight_match.start()] + line[weight_match.end():]
         line = line.strip()
-        
-    # 3. Ищем подходы и повторения в конце строки
-    tail_match = re.search(r'(\d+(?:\s*[xх/]\s*\d+)*)(?:\s*[.,!?;:]+)?\s*$', line)
+    
+    # 3. Ищем числовой хвост
+    tail_match = re.search(r'(\d+(?:\s*[xх/]\s*\d+)*)\s*(.*)$', line)
     
     if tail_match:
-        tail = tail_match.group(1)
-        exercise_name = line[:tail_match.start()].strip()
+        tail_nums = tail_match.group(1)
+        tail_rest = tail_match.group(2).strip()
         
-        # Разделяем по /, x, х (с учетом возможных пробелов)
-        parts = re.split(r'\s*[xх/]\s*', tail)
-        parts = [p.strip() for p in parts if p.strip()]
+        # Разделяем хвост по слэшам или иксам
+        parts = re.split(r'\s*[xх/]\s*', tail_nums)
+        parts = [p for p in parts if p] # убираем пустые элементы
         
         if not parts:
             return None
             
-        if len(parts) == 2:
-            # Формат "подходы/повторения" (например, 4/8)
-            try:
-                sets = int(parts[0])
-                reps = parts[1]
-            except ValueError:
-                return None
+        # ЛОГИКА РАЗДЕЛЕНИЯ:
+        if len(parts) == 2 and not tail_rest:
+            # Формат "4/8" -> подходы=4, повторения=8
+            sets = int(parts[0])
+            reps = parts[1]
         else:
-            # Формат списка повторений (например, 15/13/9/9)
-            sets = len(parts)
-            reps = '/'.join(parts)
+            # Формат "15/13/9/9" или "4 10 сек"
+            sets = int(parts[0]) # Первое число всегда подходы
+            reps = tail_rest if tail_rest else tail_nums.strip()
             
-        exercise_name = exercise_name.rstrip(' ,.-')
-        exercise_name = re.sub(r'\b(кг|килограмм|килограммов)\b', '', exercise_name, flags=re.IGNORECASE).strip()
-        exercise_name = re.sub(r'[:;,.!?]+$', '', exercise_name).strip()
+        ex_name = line[:tail_match.start()].strip()
         
-        if not exercise_name:
-            return None
-            
-        return exercise_name, weight, sets, str(reps)
+        # Очистка имени упражнения
+        ex_name = ex_name.rstrip(' ,.-')
+        ex_name = re.sub(r'\b(кг|килограмм|килограммов)\b', '', ex_name, flags=re.IGNORECASE).strip()
+        ex_name = re.sub(r'[:;,.!?]+$', '', ex_name).strip()
+        ex_name = ex_name.capitalize()
         
+        result = (ex_name, weight, sets, reps)
+        print(f"[DEBUG] Успех: name='{ex_name}', weight={weight}, sets={sets}, reps='{reps}'")
+        return result
+        
+    print(f"[DEBUG] Провал: не найдено числового хвоста")
     return None
 
+
 def parse_workouts(text: str):
+    # КРИТИЧЕСКИ ВАЖНО: заменяем десятичные запятые на точки ДО сплита, 
+    # чтобы "17,5" не разорвало строку на две части
+    text = re.sub(r'(\d),(\d)', r'\1.\2', text)
+    
     workouts = []
-    for line in text.strip().split('\n'):
+    for line in re.split(r'[\n,]+', text):
+        line = line.strip()
+        if not line:
+            continue
         parsed = parse_exercise_line(line)
         if parsed:
             workouts.append(parsed)
@@ -177,10 +198,12 @@ def parse_workouts(text: str):
 
 
 def parse_workouts_with_notes(text: str):
+    # КРИТИЧЕСКИ ВАЖНО: заменяем десятичные запятые на точки
+    text = re.sub(r'(\d),(\d)', r'\1.\2', text)
+    
     workouts = []
     notes = []
-    
-    for line in text.strip().split('\n'):
+    for line in re.split(r'[\n,]+', text):
         line = line.strip()
         if not line:
             continue
@@ -1022,8 +1045,31 @@ async def cmd_reminder(message: Message):
         text += "\nЧтобы изменить, нажми кнопку ниже:"
     else:
         text = "⏰ Напоминания не настроены.\n\nНажми кнопку ниже:"
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⚙️ Настроить напоминания", callback_data="setup_reminder")]])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⚙️ Настроить напоминания", callback_data="setup_reminder")],
+        [InlineKeyboardButton(text="🗑 Удалить напоминание", callback_data="delete_reminder_confirm")]
+    ])
     await message.answer(text, reply_markup=keyboard)
+
+@router.callback_query(lambda c: c.data == 'delete_reminder_confirm')
+async def delete_reminder_callback(callback_query: CallbackQuery):
+    # Страховка: проверяем, что нажал админ
+    if not is_admin_by_id(callback_query.from_user.id):
+        await callback_query.answer("🔒 Только для админа.", show_alert=True)
+        return
+    
+    reminders = await get_reminders()
+    
+    # Если напоминаний нет, честно говорим об этом
+    if not reminders:
+        await callback_query.answer("Напоминания и так не настроены.", show_alert=True)
+        return
+        
+    # Удаляем все напоминания без привязки к ID
+    await delete_all_reminders()
+    
+    await callback_query.message.answer("🗑 Напоминания успешно удалены. Бот больше не будет их присылать.")
+    await callback_query.answer()
 
 @router.callback_query(lambda c: c.data == 'setup_reminder')
 async def setup_reminder_callback(callback_query: CallbackQuery):
@@ -1668,11 +1714,44 @@ async def inactive_users_task():
         await asyncio.sleep(3600)  # Проверка каждый час
 
 async def main():
+    global bot  # Разрешаем изменять глобальную переменную bot
     await init_db()
+    
+    # --- БЛОК ИНИЦИАЛИЗАЦИИ БОТА С ПРОКСИ ---
+    if PROXY_URL:
+        from aiohttp_socks import ProxyConnector
+        from aiohttp import ClientSession, ClientTimeout
+        from aiogram.client.session.aiohttp import AiohttpSession
+        logger.info(f"🌐 Подключаемся через прокси...")
+        
+        # Увеличиваем таймауты, чтобы бот не падал при временных обрывах связи
+        timeout = ClientTimeout(
+            total=60,        # Общий таймаут запроса: 60 секунд
+            connect=30,      # Таймаут установки соединения: 30 секунд
+            sock_connect=30, # Таймаут подключения к сокету: 30 секунд
+            sock_read=60     # Таймаут чтения ответа: 60 секунд
+        )
+        
+        connector = ProxyConnector.from_url(PROXY_URL)
+        aiohttp_session = ClientSession(connector=connector, timeout=timeout)
+        
+        session = AiohttpSession()
+        session._session = aiohttp_session
+        
+        bot = Bot(token=BOT_TOKEN, session=session)
+    else:
+        logger.info("🌐 Прокси не указан, подключаемся напрямую")
+        bot = Bot(token=BOT_TOKEN)
+    # ----------------------------------------
+
     logger.info(f"🤖 Бот запущен... ADMIN_ID={ADMIN_ID}")
+    
     asyncio.create_task(reminder_task())
     asyncio.create_task(inactive_users_task())
     await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
 
 if __name__ == "__main__":
     asyncio.run(main())

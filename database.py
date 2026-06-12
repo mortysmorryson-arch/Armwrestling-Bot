@@ -2,7 +2,8 @@ import aiosqlite
 from datetime import datetime, timedelta
 import re
 
-DB_PATH = "bot.db"
+import os
+DB_PATH = os.getenv("DB_PATH", "bot.db")
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -21,8 +22,8 @@ async def init_db():
         """)
         
         # Добавляем новые поля, если их нет (для совместимости со старыми версиями)
-        for col, default in [("invite_token", "TEXT"), ("source", "TEXT DEFAULT 'direct'"), 
-                             ("is_blocked", "INTEGER DEFAULT 0"), ("registered_at", "TEXT")]:
+        for col, default in [("invite_token","TEXT"), ("source","TEXT DEFAULT 'direct'"), 
+                             ("is_blocked","INTEGER DEFAULT 0"), ("registered_at","TEXT")]:
             try:
                 await db.execute(f"ALTER TABLE users ADD COLUMN {col} {default}")
             except Exception:
@@ -254,6 +255,18 @@ async def get_reminders() -> list:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("SELECT user_id, days, time FROM reminders")
         return await cursor.fetchall()
+
+async def delete_reminder(user_id: int):
+    """Удаляет все напоминания для конкретного пользователя."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM reminders WHERE user_id = ?", (user_id,))
+        await db.commit()
+
+async def delete_all_reminders():
+    """Удаляет все настройки напоминаний из базы данных."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM reminders")
+        await db.commit()
 
 async def get_users_without_workout_today() -> list:
     today = datetime.now().strftime("%Y-%m-%d")

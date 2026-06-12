@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  bot:
+    build: .
+    container_name: armwrestling-bot
+    restart: unless-stopped  # Автоматический перезапуск при падении или перезагрузке сервера
+    env_file:
+      - .env                 # Подгружаем токены и прокси из твоего .env
+    volumes:
+      # Маппинг томов: папка ./data на твоем ПК = папке /app/data в контейнере
+      # Это гарантирует, что bot.db сохранится, даже если ты удалишь контейнер
+      - ./data:/app/data
+    environment:
+      - TZ=Europe/Moscow     # Правильный часовой пояс для логов и задач
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"      # Максимальный размер одного файла логов
+        max-file: "3"        # Хранить только 3 последних файла (защита от забивания диска)
