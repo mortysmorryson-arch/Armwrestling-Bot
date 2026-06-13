@@ -26,7 +26,7 @@ from database import (
     get_monthly_rating, add_goal, get_user_goals, get_current_max, delete_goal,
     set_reminder, get_reminders, delete_reminder, delete_all_reminders, get_users_without_workout_today,
     get_all_students, get_user_by_telegram_id,
-    save_message, get_unread_count, get_chat_history, mark_as_read,
+    save_message, get_unread_count, get_unread_count_from_sender, get_chat_history, mark_as_read,
     is_user_blocked, block_user, unblock_user,
     create_invite_token, get_invite_token, get_all_invites, deactivate_invite,
     get_inactive_users
@@ -54,6 +54,7 @@ last_reminder_sent_date = None
 chat_sessions = {}
 send_workout_sessions = {}
 awaiting_student_message = set()
+delete_exercise_cache = {}
 
 STICKER_RECORD = "CAACAgIAAxkBAAIBh2oizjGk4UwbQQXQ5mh1ncOqa1QjAAJomgACPP4pS7Apz8oKLfG2OwQ"
 STICKER_STREAK = "CAACAgIAAxkBAAIBiGoi2d7_WcVV7_u1drlAIMpNSMafAAJ6XwACyq0oSaCtAAGRoSMCYDsE"
@@ -63,9 +64,9 @@ STICKER_MOTIVATION = "CAACAgIAAxkBAAIBi2oi2q9k9iE9NTN9Puc5cMvH7lyLAALrYQACEDSASc
 
 MENU_BUTTONS = {
     "📝 Записать тренировку", "📋 Последняя", "📊 Моя статистика", 
-    " Прогресс", "🔥 Серия", "📅 По дате", "⚙️ Управление", "❓ Помощь", 
-    "🔐 Все ученики", "😴 Кто ленится", "📥 Экспорт CSV", "🏆 Рейтинг", " Цели",
-    "🎯 Поставить цель", "⏰ Напоминания", "💬 Чат с учеником", "️ Тренировка ученику",
+    "📈 Прогресс", "🔥 Серия", "📅 По дате", "⚙️ Управление", "❓ Помощь", 
+    "🔐 Все ученики", "😴 Кто ленится", "📥 Экспорт CSV", "🏆 Рейтинг", "🎯 Цели",
+    "🎯 Поставить цель", "⏰ Напоминания", "💬 Чат с учеником", "🏋️ Тренировка ученику",
     "📬 Сообщения", "💬 Написать тренеру", "🔗 Пригласить ученика", "👥 Управление учениками"
 }
 
@@ -81,7 +82,7 @@ async def get_unread_badge() -> str:
 
 async def get_main_keyboard_async(admin: bool = False) -> ReplyKeyboardMarkup:
     kb = [
-        [KeyboardButton(text=" Записать тренировку"), KeyboardButton(text=" Последняя")],
+        [KeyboardButton(text="📝 Записать тренировку"), KeyboardButton(text="📋 Последняя")],
         [KeyboardButton(text="📊 Моя статистика"), KeyboardButton(text="📈 Прогресс")],
         [KeyboardButton(text="🔥 Серия"), KeyboardButton(text="📅 По дате")],
         [KeyboardButton(text="⚙️ Управление"), KeyboardButton(text="🎯 Цели")],
@@ -857,30 +858,50 @@ async def cmd_date_prompt(message: Message):
 async def cmd_manage(message: Message):
     user_id = await get_or_create_user(message.from_user.id, message.from_user.full_name)
     exercises = await get_user_exercises(user_id)
+    
     if not exercises:
-        await message.answer(" Нет упражнений.")
+        await message.answer("📭 У тебя пока нет записанных упражнений для удаления.")
         return
+        
     keyboard = InlineKeyboardMarkup(inline_keyboard=[])
-    for ex in exercises:
-        keyboard.inline_keyboard.append([InlineKeyboardButton(text=f"🗑 Удалить {ex}", callback_data=f"delete_exercise_{ex}")])
+    for i, ex in enumerate(exercises):
+        # Используем короткий ID (user_id + индекс), чтобы не превысить лимит Telegram в 64 байта
+        short_id = f"{user_id}_{i}"
+        delete_exercise_cache[short_id] = ex
+        keyboard.inline_keyboard.append([InlineKeyboardButton(text=f"🗑 Удалить {ex}", callback_data=f"delete_exercise_{short_id}")])
+    
     await message.answer("⚙️ Выбери упражнение для удаления:", reply_markup=keyboard)
 
 @router.callback_query(lambda c: c.data.startswith('delete_exercise_'))
 async def confirm_delete_callback(callback_query: CallbackQuery):
-    exercise = callback_query.data.replace('delete_exercise_', '')
+    short_id = callback_query.data.replace('delete_exercise_', '')
+    exercise = delete_exercise_cache.get(short_id, "Неизвестное упражнение")
+    
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Да", callback_data=f"confirm_delete_{exercise}"),
+        [InlineKeyboardButton(text="✅ Да", callback_data=f"confirm_delete_{short_id}"),
          InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_delete")]
     ])
-    await callback_query.message.answer(f"⚠️ Удалить '{exercise}'?", reply_markup=keyboard)
+    await callback_query.message.answer(f"⚠️ Удалить все записи упражнения '{exercise}'?", reply_markup=keyboard)
     await callback_query.answer()
 
 @router.callback_query(lambda c: c.data.startswith('confirm_delete_'))
 async def process_delete_callback(callback_query: CallbackQuery):
-    exercise = callback_query.data.replace('confirm_delete_', '')
+    short_id = callback_query.data.replace('confirm_delete_', '')
+    exercise = delete_exercise_cache.get(short_id)
+    
+    if not exercise:
+        await callback_query.message.answer("❌ Сессия удаления истекла. Начни заново через меню 'Управление'.")
+        await callback_query.answer()
+        return
+        
     user_id = await get_or_create_user(callback_query.from_user.id, callback_query.from_user.full_name)
     deleted_count = await delete_exercise(user_id, exercise)
-    await callback_query.message.answer(f"✅ Удалено: {deleted_count}")
+    
+    # Очищаем кэш после использования
+    if short_id in delete_exercise_cache:
+        del delete_exercise_cache[short_id]
+        
+    await callback_query.message.answer(f"✅ Удалено записей: {deleted_count}")
     await callback_query.answer()
 
 @router.callback_query(lambda c: c.data == 'cancel_delete')
@@ -1286,23 +1307,31 @@ async def cmd_write_to_coach(message: Message):
 async def cmd_messages(message: Message):
     if not is_admin(message):
         return await message.answer("🔒 Только для админа.")
+    
     students = await get_all_students()
     if not students:
         return await message.answer("📭 Нет учеников.")
+    
     keyboard = InlineKeyboardMarkup(inline_keyboard=[])
     has_unread = False
+    
     for user_db_id, telegram_id, name in students:
         if telegram_id == ADMIN_ID:
             continue
-        unread = await get_unread_count(telegram_id)
+        
+        # ИСПРАВЛЕНО: считаем непрочитанные ИМЕННО от этого ученика для админа
+        unread = await get_unread_count_from_sender(telegram_id, ADMIN_ID)
         badge = f" ({unread})" if unread > 0 else ""
+        
         keyboard.inline_keyboard.append([InlineKeyboardButton(text=f"{name}{badge}", callback_data=f"view_chat_{telegram_id}")])
         if unread > 0:
             has_unread = True
+            
     if not has_unread:
         keyboard.inline_keyboard.insert(0, [InlineKeyboardButton(text="✅ Непрочитанных нет", callback_data="noop")])
     keyboard.inline_keyboard.append([InlineKeyboardButton(text="❌ Закрыть", callback_data="close_messages")])
-    await message.answer("📬 *Сообщения от учеников*\n\nВыбери ученика:", reply_markup=keyboard, parse_mode="Markdown")
+    
+    await message.answer("📬 Сообщения от учеников\n\nВыбери ученика:", reply_markup=keyboard, parse_mode="Markdown")
 
 @router.callback_query(lambda c: c.data.startswith('view_chat_'))
 async def view_chat_callback(callback_query: CallbackQuery):
@@ -1345,10 +1374,10 @@ async def back_messages_callback(callback_query: CallbackQuery):
     for user_db_id, telegram_id, name in students:
         if telegram_id == ADMIN_ID:
             continue
-        unread = await get_unread_count(telegram_id)
+        # ИСПРАВЛЕНО: правильный подсчет при возврате назад
+        unread = await get_unread_count_from_sender(telegram_id, ADMIN_ID)
         badge = f" ({unread})" if unread > 0 else ""
         keyboard.inline_keyboard.append([InlineKeyboardButton(text=f"{name}{badge}", callback_data=f"view_chat_{telegram_id}")])
-    keyboard.inline_keyboard.append([InlineKeyboardButton(text="❌ Закрыть", callback_data="close_messages")])
     await callback_query.message.edit_text("📬 *Сообщения от учеников*\n\nВыбери ученика:", reply_markup=keyboard, parse_mode="Markdown")
     await callback_query.answer()
 
@@ -1382,7 +1411,7 @@ async def handle_any_text(message: Message):
     text = message.text
     if text.startswith('/'):
         return
-    if text in MENU_BUTTONS:
+    if text.strip() in {btn.strip() for btn in MENU_BUTTONS}:
         return
     
     # === ПРОВЕРКА БЛОКИРОВКИ ===

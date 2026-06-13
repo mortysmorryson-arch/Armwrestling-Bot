@@ -119,6 +119,16 @@ async def init_db():
         
         await db.commit()
 
+async def get_unread_count_from_sender(sender_telegram_id: int, receiver_telegram_id: int) -> int:
+    """Считает непрочитанные сообщения от конкретного отправителя для получателя."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM messages WHERE sender_telegram_id = ? AND receiver_telegram_id = ? AND is_read = 0",
+            (sender_telegram_id, receiver_telegram_id)
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
 async def get_or_create_user(telegram_id: int, name: str, invite_token: str = None, source: str = 'direct') -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("SELECT id FROM users WHERE telegram_id = ?", (telegram_id,))
@@ -413,8 +423,9 @@ async def get_workouts_by_date(user_id: int, day: int, month: int) -> list:
 async def get_monthly_rating() -> list:
     current_month = datetime.now().strftime("%Y-%m")
     async with aiosqlite.connect(DB_PATH) as db:
+        # ИСПРАВЛЕНО: COUNT(DISTINCT w.date) считает уникальные дни тренировок, а не количество упражнений
         cursor = await db.execute("""
-            SELECT u.name, COUNT(w.id) as count 
+            SELECT u.name, COUNT(DISTINCT w.date) as count
             FROM users u
             JOIN workouts w ON u.id = w.user_id
             WHERE w.date LIKE ? || '%' AND u.role = 'student' AND u.is_blocked = 0
