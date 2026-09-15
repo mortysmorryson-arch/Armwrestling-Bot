@@ -1,0 +1,36 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["."]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "SIM", "PLC", "PLE", "PLW", "RUF"]
+ignore = [
+    "E501",    # Длина строки — пусть форматтер рулит
+    "PLR0911", # Слишком много return
+    "PLR0912", # Слишком много ветвлений (в хендлерах нормально)
+    "PLR0913", # Слишком много аргументов
+    "PLR0915", # Слишком много строк в функции (пока не разбили bot.py)
+    "PLW2901", # Перезапись переменной цикла
+    "RUF001", "RUF002", "RUF003", # Кириллица в строках/комментах — ок
+    "F401",    # Unused imports (временно, пока не чистим импорты)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["database"]
+split-on-trailing-comma = true
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+[tool.ruff.lint.per-file-ignores]
+"bot.py" = [
+    "PLC0415",  # Импорты внутри функций (lazy imports для прокси)
+    "PLW0603",  # Global variables (bot, last_reminder_sent_date)
+    "SIM102",   # Вложенные if (читаемость)
+    "SIM105",   # contextlib.suppress (текущий вариант ок)
+    "B007",     # Неиспользуемые переменные в циклах
+    "F841",     # Неиспользуемые переменные
+    "RUF006",   # asyncio.create_task без сохранения
+]

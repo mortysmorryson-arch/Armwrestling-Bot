@@ -1,0 +1,23 @@
+# Секретные данные (реальные токены!)
+.env
+
+# База данных (там личные данные учеников!)
+bot.db
+*.sqlite3
+chroma_db/
+data/
+
+# Системные файлы Python
+__pycache__/
+*.py[cod]
+*$py.class
+config.json
+
+# Виртуальное окружение (если есть)
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
