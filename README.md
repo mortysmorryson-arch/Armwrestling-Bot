@@ -1,4 +1,4 @@
-# 🏋️ Armwrestling Bot (и твой DevOps-полигон)
+# 🏋️ Armwrestling Bot
 
 Telegram-бот для тренера по армрестлингу: учёт тренировок, цели, чат с учениками,
  reminders, AI-консультант `/swarm` (рой из 3 LLM + RAG по базе знаний).
