@@ -1,0 +1,23 @@
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+*.db
+*.sqlite
+*.sqlite3
+.DS_Store
+.vscode/
+.idea/
+*.log
+.git/
+.gitignore
+README.md
+test_parser.py
+# Данные не запекаем в образ — монтируются как volume:
+chroma_db
+knowledge_base/__pycache__
+scripts/__pycache__

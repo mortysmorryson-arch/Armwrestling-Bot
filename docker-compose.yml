@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  bot:
+    build: .
+    container_name: armwrestling-bot
+    restart: unless-stopped  # Автоматический перезапуск при падении или перезагрузке сервера
+    env_file:
+      - .env                 # Подгружаем токены и прокси из твоего .env
+    volumes:
+      # Маппинг томов: папки на хосте = папки в контейнере.
+      # Данные (БД и RAG-индекс) переживают пересборку/удаление контейнера.
+      - ./data:/app/data
+      - ./chroma_db:/app/chroma_db
+      - ./knowledge_base:/app/knowledge_base:ro
+    environment:
+      - TZ=Europe/Moscow     # Правильный часовой пояс для логов и задач
+    healthcheck:
+      # Docker считает контейнер живым, только если python импортирует бота
+      # и видит файл БД (docker compose ps покажет healthy/unhealthy)
+      test: ["CMD", "python", "-c", "import bot, os, sys; sys.exit(0 if os.path.exists(os.environ.get('DB_PATH', '/app/data/bot.db')) else 1)"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"      # Максимальный размер одного файла логов
+        max-file: "3"        # Хранить только 3 последних файла (защита от забивания диска)
