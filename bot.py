@@ -18,6 +18,7 @@ from aiogram.exceptions import TelegramNetworkError
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
+from aiogram.types.error_event import ErrorEvent
 from aiohttp import ClientError
 
 from config import ADMIN_ID, BOT_TOKEN, PROXY_URL
@@ -383,7 +384,8 @@ async def inactive_users_task():
         await asyncio.sleep(3600)
 
 @dp.error()
-async def on_error(event, exception):
+async def on_error(event: ErrorEvent):
+    exception = event.exception
     """Глобальный обработчик ошибок (DevOps: observability).
     Необработанное исключение в хендлере: в лог — трейсбек, пользователю —
     аккуратное сообщение без технических деталей."""

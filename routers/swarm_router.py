@@ -35,16 +35,32 @@ MAX_PROMPT_CHARS = 24000
 
 
 def split_message(text: str, limit: int = 4096) -> list:
-    """Режет текст на куски под лимит Telegram."""
+    """Режет текст, не ломая <pre> блоки."""
     chunks = []
     while len(text) > limit:
         cut = text.rfind("\n", 0, limit)
         if cut < limit // 2:
             cut = limit
+        chunk = text[:cut]
+        # если внутри <pre> — расширяем до </pre>
+        if chunk.count("<pre>") > chunk.count("</pre>"):
+            close = text.find("</pre>", cut)
+            if close != -1 and close < cut + 2000:
+                cut = close + len("</pre>")
         chunks.append(text[:cut])
         text = text[cut:].lstrip("\n")
     chunks.append(text)
     return chunks
+
+async def safe_send(message, text: str, parse_mode="HTML"):
+    from aiogram.exceptions import TelegramBadRequest
+    try:
+        await message.answer(text, parse_mode=parse_mode)
+    except TelegramBadRequest as e:
+        if "can't parse" in str(e).lower() or "parse entities" in str(e).lower():
+            await message.answer(text, parse_mode=None)
+        else:
+            raise
 
 
 async def get_student_data_by_name(name: str):
@@ -190,7 +206,7 @@ async def cmd_swarm(message: Message):
             err_text = a["text"].replace("<", "&lt;").replace(">", "&gt;")[:200]
             line += f"<code>{err_text}</code>\n"
         summary += line
-    await message.answer(summary, parse_mode="HTML")
+    await safe_send(message, summary, parse_mode="HTML")
 
     # Вердикт
     if verdict and verdict["provider"] == "error":
@@ -201,7 +217,7 @@ async def cmd_swarm(message: Message):
         header = f"⚖️ <b>ВЕРДИКТ ПРЕДСЕДАТЕЛЯ</b> <i>({verdict['model']})</i>\n\n"
         body = render_for_telegram(verdict["text"])
         for chunk in split_message(header + body, limit=4096):
-            await message.answer(chunk, parse_mode="HTML")
+            await safe_send(message, chunk, parse_mode="HTML")
     else:
         err = verdict["text"][:200] if verdict else "неизвестная ошибка"
-        await message.answer(f"⚠️ Председатель не смог вынести вердикт.\n<code>{err}</code>", parse_mode="HTML")
+        await safe_send(message, f"⚠️ Председатель не смог вынести вердикт.\n<code>{err}</code>", parse_mode="HTML")
